@@ -298,8 +298,3 @@ class PersonDetection:
         self.head_direction_error = None
         self.hip_point = None
         self.elbow_point = None
-
-        self.track_index = None
-        self.short_track_index = None
-        self.re_id_encoding = None
-        self.head = None
