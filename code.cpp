@@ -1,7 +1,15 @@
 /*
  * Wrapper on OpenPose API
  * OpenPose Repo: https://github.com/CMU-Perceptual-Computing-Lab/openpose
- *
+ *========================================
+ * Compatible commit from OpenPose Project:
+ * commit d80fd22c293969908ce852f32789cbdb8aa71584
+ * Author: Gines <gines@cmu.edu>
+ * Date:   Tue Feb 6 12:51:20 2018 -0500
+
+    Fixed Windows bugs
+
+ *==========================================
  * Code has been adapted from OpenPose project examples.
  */
 
@@ -30,32 +38,43 @@
 
 #include <iostream>
 
- using namespace boost::python;
+using namespace boost::python;
 
 
 DEFINE_int32(logging_level,             3,              "The logging level. Integer in the range [0, 255]. 0 will output any log() message, while 255 will not output any."
-                                                        " Current OpenPose library messages are in the range 0-4: 1 for low priority messages and 4 for important ones.");
+" Current OpenPose library messages are in the range 0-4: 1 for low priority messages and 4 for important ones.");
 // OpenPose
 DEFINE_string(model_pose,               "COCO",         "Model to be used (e.g. COCO, MPI, MPI_4_layers).");
 DEFINE_string(model_folder,             "models/",      "Folder where the pose models (COCO and MPI) are located.");
 DEFINE_string(net_resolution,           "656x368",      "Multiples of 16.");
-DEFINE_string(resolution,               "1280x720",     "The image resolution (display). Use \"-1x-1\" to force the program to use the default images resolution.");
-DEFINE_int32(num_gpu_start,             0,              "GPU device start number.");
+DEFINE_string(output_resolution,               "1280x720",     "The image resolution (display). Use \"-1x-1\" to force the program to use the default images resolution.");
 DEFINE_double(scale_gap,                0.3,            "Scale gap between scales. No effect unless num_scales>1. Initial scale is always 1. If you want to change the initial scale, "
-                                                        "you actually want to multiply the `net_resolution` by your desired initial scale.");
+"you actually want to multiply the `net_resolution` by your desired initial scale.");
 DEFINE_int32(num_scales,                1,              "Number of scales to average.");
 // OpenPose Rendering
 DEFINE_double(alpha_pose,               0.6,            "Blending factor (range 0-1) for the body part rendering. 1 will show it completely, 0 will hide it.");
 
+DEFINE_int32(scale_number,              1,              "Number of scales to average.");
+DEFINE_int32(num_gpu_start,             0,              "GPU device start number.");
+
+
+DEFINE_double(render_threshold,         0.05,           "Only estimated keypoints whose score confidences are higher than this threshold will be"
+                                                        " rendered. Generally, a high threshold (> 0.5) will only render very clear body parts;"
+                                                        " while small thresholds (~0.1) will also output guessed and occluded keypoints, but also"
+                                                        " more false positives (i.e. wrong detections).");
+
+DEFINE_bool(disable_blending,           false,          "If enabled, it will render the results (keypoint skeletons or heatmaps) on a black"
+                                                        " background, instead of being rendered into the original image. Related: `part_to_show`,"
+                                                        " `alpha_pose`, and `alpha_pose`.");
+
 using namespace std;
 
-cv::Size outputSize;
-cv::Size netInputSize;
-cv::Size netOutputSize;
+op::Point<int> outputSize;
+op::Point<int> netInputSize;
+//op::Point netOutputSize;
 op::PoseModel poseModel;
 op::CvMatToOpInput * cvMatToOpInput;
 op::CvMatToOpOutput * cvMatToOpOutput;
-cv::Size windowedSize;
 
 op::PoseRenderer * poseRenderer;
 
@@ -63,6 +82,8 @@ op::OpOutputToCvMat * opOutputToCvMat;
 
 op::PoseExtractorCaffe * poseExtractorCaffe;
 op::FrameDisplayer * frameDisplayer;
+
+op::ScaleAndSizeExtractor * scaleAndSizeExtractor;
 
 bool renderOutputs = false;
 
@@ -72,55 +93,55 @@ cv::Mat outputImage;
 
 void error(const char *msg)
 {
-	perror(msg);
-	exit(1);
+    perror(msg);
+    exit(1);
 }
 
 
 
 op::PoseModel gflagToPoseModel(const std::string& poseModeString)
 {
-	op::log("", op::Priority::Low, __LINE__, __FUNCTION__, __FILE__);
-	if (poseModeString == "COCO")
-		return op::PoseModel::COCO_18;
-	else if (poseModeString == "MPI")
-		return op::PoseModel::MPI_15;
-	else if (poseModeString == "MPI_4_layers")
-		return op::PoseModel::MPI_15_4;
-	else
-	{
-		op::error("String does not correspond to any model (COCO, MPI, MPI_4_layers)", __LINE__, __FUNCTION__, __FILE__);
-		return op::PoseModel::COCO_18;
-	}
+    op::log("", op::Priority::Low, __LINE__, __FUNCTION__, __FILE__);
+    if (poseModeString == "COCO")
+        return op::PoseModel::COCO_18;
+    else if (poseModeString == "MPI")
+        return op::PoseModel::MPI_15;
+    else if (poseModeString == "MPI_4_layers")
+        return op::PoseModel::MPI_15_4;
+    else
+    {
+        op::error("String does not correspond to any model (COCO, MPI, MPI_4_layers)", __LINE__, __FUNCTION__, __FILE__);
+        return op::PoseModel::COCO_18;
+    }
 }
 
-// Google flags into program variables
-std::tuple<cv::Size, cv::Size, cv::Size, op::PoseModel> gflagsToOpParameters(int netWidth, int netHeight)
-{
-	op::log("", op::Priority::Low, __LINE__, __FUNCTION__, __FILE__);
-	// outputSize
-	cv::Size outputSize;
-	auto nRead = sscanf(FLAGS_resolution.c_str(), "%dx%d", &outputSize.width, &outputSize.height);
-	op::checkE(nRead, 2, "Error, resolution format (" +  FLAGS_resolution + ") invalid, should be e.g., 960x540 ", __LINE__, __FUNCTION__, __FILE__);
-	// netInputSize
-	cv::Size netInputSize;
-	nRead = sscanf(FLAGS_net_resolution.c_str(), "%dx%d", &netInputSize.width, &netInputSize.height);
-	netInputSize.width = netWidth;
-	netInputSize.height = netHeight;
-	op::checkE(nRead, 2, "Error, net resolution format (" +  FLAGS_net_resolution + ") invalid, should be e.g., 656x368 (multiples of 16)", __LINE__, __FUNCTION__, __FILE__);
-	// netOutputSize
-	const auto netOutputSize = netInputSize;
-	// poseModel
-	const auto poseModel = gflagToPoseModel(FLAGS_model_pose);
-	// Check no contradictory flags enabled
-	if (FLAGS_alpha_pose < 0. || FLAGS_alpha_pose > 1.)
-		op::error("Alpha value for blending must be in the range [0,1].", __LINE__, __FUNCTION__, __FILE__);
-	if (FLAGS_scale_gap <= 0. && FLAGS_num_scales > 1)
-		op::error("Uncompatible flag configuration: scale_gap must be greater than 0 or num_scales = 1.", __LINE__, __FUNCTION__, __FILE__);
-	// Logging and return result
-	op::log("", op::Priority::Low, __LINE__, __FUNCTION__, __FILE__);
-	return std::make_tuple(outputSize, netInputSize, netOutputSize, poseModel);
-}
+//// Google flags into program variables
+//std::tuple<cv::Size, cv::Size, cv::Size, op::PoseModel> gflagsToOpParameters(int netWidth, int netHeight)
+//{
+//    op::log("", op::Priority::Low, __LINE__, __FUNCTION__, __FILE__);
+//    // outputSize
+//    cv::Size outputSize;
+//    auto nRead = sscanf(FLAGS_resolution.c_str(), "%dx%d", &outputSize.width, &outputSize.height);
+//    op::checkE(nRead, 2, "Error, resolution format (" +  FLAGS_resolution + ") invalid, should be e.g., 960x540 ", __LINE__, __FUNCTION__, __FILE__);
+//    // netInputSize
+//    cv::Size netInputSize;
+//    nRead = sscanf(FLAGS_net_resolution.c_str(), "%dx%d", &netInputSize.width, &netInputSize.height);
+//    netInputSize.width = netWidth;
+//    netInputSize.height = netHeight;
+//    op::checkE(nRead, 2, "Error, net resolution format (" +  FLAGS_net_resolution + ") invalid, should be e.g., 656x368 (multiples of 16)", __LINE__, __FUNCTION__, __FILE__);
+//    // netOutputSize
+//    const auto netOutputSize = netInputSize;
+//    // poseModel
+//    const auto poseModel = gflagToPoseModel(FLAGS_model_pose);
+//    // Check no contradictory flags enabled
+//    if (FLAGS_alpha_pose < 0. || FLAGS_alpha_pose > 1.)
+//        op::error("Alpha value for blending must be in the range [0,1].", __LINE__, __FUNCTION__, __FILE__);
+//    if (FLAGS_scale_gap <= 0. && FLAGS_num_scales > 1)
+//        op::error("Uncompatible flag configuration: scale_gap must be greater than 0 or num_scales = 1.", __LINE__, __FUNCTION__, __FILE__);
+//    // Logging and return result
+//    op::log("", op::Priority::Low, __LINE__, __FUNCTION__, __FILE__);
+//    return std::make_tuple(outputSize, netInputSize, netOutputSize, poseModel);
+//}
 
 /**
  * Initializes API
@@ -129,49 +150,64 @@ std::tuple<cv::Size, cv::Size, cv::Size, op::PoseModel> gflagsToOpParameters(int
  * @param netHeight Height of net
  */
 void setup(bool renderOutputs, int netWidth, int netHeight){
-	Py_BEGIN_ALLOW_THREADS
-	op::log("Here we got started!!");
-	if(renderOutputs){
-		op::log("Outputs will be rendered!");
-	}
-	else{
-		op::log("Outputs will NOT be rendered!");
-	}
+    Py_BEGIN_ALLOW_THREADS
+            op::log("Here we got started!!");
+    if(renderOutputs){
+        op::log("Outputs will be rendered!");
+    }
+    else{
+        op::log("Outputs will NOT be rendered!");
+    }
 
 
-	op::check(0 <= FLAGS_logging_level && FLAGS_logging_level <= 255, "Wrong logging_level value.", __LINE__, __FUNCTION__, __FILE__);
-	op::ConfigureLog::setPriorityThreshold((op::Priority)FLAGS_logging_level);
+    op::check(0 <= FLAGS_logging_level && FLAGS_logging_level <= 255, "Wrong logging_level value.", __LINE__, __FUNCTION__, __FILE__);
+    op::ConfigureLog::setPriorityThreshold((op::Priority)FLAGS_logging_level);
 
-	op::log(netWidth);
-	op::log(netHeight);
+    op::log(netWidth);
+    op::log(netHeight);
 
-	std::tie(outputSize, netInputSize, netOutputSize, poseModel) = gflagsToOpParameters(netWidth,netHeight);
+    outputSize = op::flagsToPoint(FLAGS_output_resolution, "-1x-1");
+    // netInputSize
+    netInputSize = op::flagsToPoint(FLAGS_net_resolution, "-1x368");
+    // poseModel
+    poseModel = op::flagsToPoseModel(FLAGS_model_pose);
 
-	// Step 3 - Initialize all required classes
-	cvMatToOpInput = new op::CvMatToOpInput(netInputSize, FLAGS_num_scales, (float)FLAGS_scale_gap);
-	cvMatToOpOutput = new op::CvMatToOpOutput(outputSize);
 
-	poseExtractorCaffe = new op::PoseExtractorCaffe(netInputSize, netOutputSize, outputSize, FLAGS_num_scales, (float)FLAGS_scale_gap, poseModel,
-											  FLAGS_model_folder, FLAGS_num_gpu_start);
+//    std::tie(outputSize, netInputSize, netOutputSize, poseModel) = gflagsToOpParameters(netWidth,netHeight);
 
-	if(renderOutputs)
-		poseRenderer = new op::PoseRenderer (netOutputSize, outputSize, poseModel, nullptr, (float)FLAGS_alpha_pose);
+    // Step 3 - Initialize all required classes
+    scaleAndSizeExtractor = new op::ScaleAndSizeExtractor(netInputSize, outputSize, FLAGS_scale_number, FLAGS_scale_gap);
 
-	opOutputToCvMat = new op::OpOutputToCvMat(outputSize);
-	windowedSize = outputSize;
+//    cvMatToOpInput = new op::CvMatToOpInput(netInputSize, FLAGS_num_scales, (float)FLAGS_scale_gap);
+//    cvMatToOpOutput = new op::CvMatToOpOutput(outputSize);
 
-	if(renderOutputs)
-		frameDisplayer = new op::FrameDisplayer(windowedSize, "Custom Code");
+    cvMatToOpInput = new op::CvMatToOpInput;
+    cvMatToOpOutput = new op::CvMatToOpOutput;
 
-	 // Step 4 - Initialize resources on desired thread (in this case single thread, i.e. we init resources here)
-	poseExtractorCaffe->initializationOnThread();
+    poseExtractorCaffe = new op::PoseExtractorCaffe {poseModel, FLAGS_model_folder, FLAGS_num_gpu_start};
 
-	if(renderOutputs)
-		poseRenderer->initializationOnThread();
+//    poseExtractorCaffe = new op::PoseExtractorCaffe(netInputSize, netOutputSize, outputSize, FLAGS_num_scales, (float)FLAGS_scale_gap, poseModel,
+//                                                    FLAGS_model_folder, FLAGS_num_gpu_start);
 
-	op::log("setup ended!");
+    if(renderOutputs) {
+        poseRenderer = new op::PoseCpuRenderer{poseModel, (float)FLAGS_render_threshold,!FLAGS_disable_blending ,(float) FLAGS_alpha_pose};
+    }
 
-	Py_END_ALLOW_THREADS
+
+    opOutputToCvMat = new op::OpOutputToCvMat;
+
+    if(renderOutputs)
+        frameDisplayer = new op::FrameDisplayer{"OpenPose Tutorial - Example 1", outputSize};
+
+    // Step 4 - Initialize resources on desired thread (in this case single thread, i.e. we init resources here)
+    poseExtractorCaffe->initializationOnThread();
+
+    if(renderOutputs)
+        poseRenderer->initializationOnThread();
+
+    op::log("setup ended!");
+
+    Py_END_ALLOW_THREADS
 
 }
 
@@ -183,44 +219,51 @@ void setup(bool renderOutputs, int netWidth, int netHeight){
  */
 cv::Mat estimatePoseMat(cv::Mat inputImage)
 {
-	if(inputImage.empty())
-		op::log("Empty Image");
-	// Step 2 - Format input image to OpenPose input and output formats
-	const auto netInputArray = cvMatToOpInput->format(inputImage);
-	//op::log("Formatted!");
-	double scaleInputToOutput;
-	op::Array<float> outputArray;
-	std::tie(scaleInputToOutput, outputArray) = cvMatToOpOutput->format(inputImage);
+    if(inputImage.empty())
+        op::log("Empty Image");
+    // Step 2 - Format input image to OpenPose input and output formats
 
-	// Step 3 - Estimate poseKeyPoints
-	poseExtractorCaffe->forwardPass(netInputArray, inputImage.size());
-	const auto poseKeyPoints = poseExtractorCaffe->getPoseKeyPoints();
+    const op::Point<int> imageSize{inputImage.cols, inputImage.rows};
 
-	//op::log("Pose Estimated");
+    std::vector<double> scaleInputToNetInputs;
+    std::vector<op::Point<int>> netInputSizes;
+    double scaleInputToOutput;
+    op::Point<int> outputResolution;
+    std::tie(scaleInputToNetInputs, netInputSizes, scaleInputToOutput, outputResolution)
+            = scaleAndSizeExtractor->extract(imageSize);
 
+    const auto netInputArray = cvMatToOpInput->createArray(inputImage, scaleInputToNetInputs, netInputSizes);
+    auto outputArray = cvMatToOpOutput->createArray(inputImage, scaleInputToOutput, outputResolution);
 
-	int count = poseKeyPoints.getSize(0);
+    // Step 3 - Estimate poseKeyPoints
+    poseExtractorCaffe->forwardPass(netInputArray, imageSize, scaleInputToNetInputs);
+    const auto poseKeyPoints = poseExtractorCaffe->getPoseKeypoints();
 
-
-	std::ostringstream resultBuilder;
-
-	if(renderOutputs)
-	{
-		poseRenderer->renderPose(outputArray, poseKeyPoints);
-	}
-	outputImage = opOutputToCvMat->formatToCvMat(outputArray);
-
-	if(count == 0)
-	{
-		return cv::Mat();
-	}
-
-	auto outputResult = poseKeyPoints.getConstCvMat();
-
-	//op::log("Result converted to matrix");
+    //op::log("Pose Estimated");
 
 
-	return outputResult;
+    int count = poseKeyPoints.getSize(0);
+
+
+    std::ostringstream resultBuilder;
+
+    if(renderOutputs)
+    {
+        poseRenderer->renderPose(outputArray, poseKeyPoints, scaleInputToOutput);
+    }
+    outputImage = opOutputToCvMat->formatToCvMat(outputArray);
+
+    if(count == 0)
+    {
+        return cv::Mat();
+    }
+
+    auto outputResult = poseKeyPoints.getConstCvMat();
+
+    //op::log("Result converted to matrix");
+
+
+    return outputResult;
 }
 
 /**
@@ -229,8 +272,8 @@ cv::Mat estimatePoseMat(cv::Mat inputImage)
  */
 PyObject * getOutputImage()
 {
-	PyObject *ret = pbcvt::fromMatToNDArray(outputImage);
-	return ret;
+    PyObject *ret = pbcvt::fromMatToNDArray(outputImage);
+    return ret;
 }
 
 /**
@@ -240,24 +283,24 @@ PyObject * getOutputImage()
  */
 PyObject *detect(PyObject *frame)
 {
-	PyObject *ret = 0;
-	cv::Mat result;
+    PyObject *ret = 0;
+    cv::Mat result;
 
-	//op::log("Detect Called");
-	cv::Mat frameMat;;
-	frameMat = pbcvt::fromNDArrayToMat(frame);
-	//op::log("Frame Converted");
+    //op::log("Detect Called");
+    cv::Mat frameMat;;
+    frameMat = pbcvt::fromNDArrayToMat(frame);
+    //op::log("Frame Converted");
 
-	Py_BEGIN_ALLOW_THREADS
+    Py_BEGIN_ALLOW_THREADS
 
-	result =  estimatePoseMat(frameMat);
-	//op::log("Estimated");
+            result =  estimatePoseMat(frameMat);
+    //op::log("Estimated");
 
-	Py_END_ALLOW_THREADS
+    Py_END_ALLOW_THREADS
 
-	ret = pbcvt::fromMatToNDArray(result);
+            ret = pbcvt::fromMatToNDArray(result);
 
-	return ret;
+    return ret;
 
 }
 
@@ -267,7 +310,7 @@ PyObject *detect(PyObject *frame)
  */
 int getOutputWidth()
 {
-	return outputImage.size[1];
+    return outputImage.size[1];
 }
 
 /**
@@ -276,23 +319,23 @@ int getOutputWidth()
  */
 int getOutputHeight()
 {
-	return outputImage.size[0];
+    return outputImage.size[0];
 }
 
 // Initializations
 
 #if (PY_VERSION_HEX >= 0x03000000)
 
-    static void *init_ar() {
+static void *init_ar() {
 #else
-        static void init_ar(){
+static void init_ar(){
 #endif
-        Py_Initialize();
-        PyEval_InitThreads();
+    Py_Initialize();
+    PyEval_InitThreads();
 
-        import_array();
-        return NUMPY_IMPORT_ARRAY_RETVAL;
-    }
+    import_array();
+    return NUMPY_IMPORT_ARRAY_RETVAL;
+}
 
 
 /**
@@ -300,19 +343,18 @@ int getOutputHeight()
  */
 BOOST_PYTHON_MODULE(libOpenPersonDetectorAPI)
 {
-	init_ar();
+        init_ar();
 
-	//initialize converters
-	to_python_converter<cv::Mat,
-			pbcvt::matToNDArrayBoostConverter>();
-	pbcvt::matFromNDArrayBoostConverter();
+        //initialize converters
+        to_python_converter<cv::Mat,
+        pbcvt::matToNDArrayBoostConverter>();
+        pbcvt::matFromNDArrayBoostConverter();
 
-    // Initialize endpoints
-    def("detect", detect);
-    def("getOutputImage", getOutputImage);
-    def("getOutputWidth", getOutputWidth);
-    def("getOutputHeight", getOutputHeight);
-    def("setup", setup);
+        // Initialize endpoints
+        def("detect", detect);
+        def("getOutputImage", getOutputImage);
+        def("getOutputWidth", getOutputWidth);
+        def("getOutputHeight", getOutputHeight);
+        def("setup", setup);
 
 }
-

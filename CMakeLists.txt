@@ -29,11 +29,19 @@ if(NOT EXISTS "${CUDA_HOME_DIRECTORY}/include/cuda.h")
     message(SEND_ERROR "Can't find cuda.h in ${CUDA_HOME_DIRECTORY}/include")
 endif()
 
-set(OP_CAFFE_HOME_DIRECTORY "" CACHE FILEPATH "Path to Caffe embedded with OpenPose.")
+set(OP_CAFFE_INCLUDE_DIRECTORY "" CACHE FILEPATH "Path to include directory of Caffe embedded with OpenPose.")
 
-if(NOT EXISTS "${OP_CAFFE_HOME_DIRECTORY}/include/caffe/caffe.hpp")
-    message(SEND_ERROR "Can't find caffe.hpp in ${OP_CAFFE_HOME_DIRECTORY}/include/caffe")
+if(NOT EXISTS "${OP_CAFFE_INCLUDE_DIRECTORY}/caffe/caffe.hpp")
+    message(SEND_ERROR "Can't find caffe.hpp in ${OP_CAFFE_INCLUDE_DIRECTORY}/caffe")
 endif()
+
+
+set(OP_CAFFE_LIB_DIRECTORY "" CACHE FILEPATH "Path to libcaffee.so embedded with OpenPose.")
+
+if(NOT EXISTS "${OP_CAFFE_LIB_DIRECTORY}/libcaffe.so")
+    message(SEND_ERROR "Can't find libcaffe.so in ${OP_CAFFE_LIB_DIRECTORY}")
+endif()
+
 
 set(NUMPY_INCLUDE_DIRECTORY "" CACHE FILEPATH "Path to Numpy Includes.")
 
@@ -73,10 +81,10 @@ if(NOT EXISTS "${OPENCV_LIB_DIRECTORY}/libopencv_core.so")
     message(SEND_ERROR "Can't find ${OPENPOSE_LIB_DIRECTORY}/libopencv_core.so")
 endif()
 
-include_directories(${OP_INCLUDE_DIRECTORY} ${PBCVC_INCLUDE_DIRECTORY} ${PYTHON_INCLUDE_DIRECTORY} ${CUDA_HOME_DIRECTORY}/include ${OP_CAFFE_HOME_DIRECTORY}/include ${NUMPY_INCLUDE_DIRECTORY} ${BOOST_INCLUDE_DIRECTORY})
-link_directories("${CUDA_HOME_DIRECTORY}/lib64" "${OP_CAFFE_HOME_DIRECTORY}/build/lib/" "${PBCVC_LIB_DIRECTORY}" "${PYTHON_LIB_DIRECTORY}" "${OPENPOSE_LIB_DIRECTORY}" "${OPENCV_LIB_DIRECTORY}")
+include_directories(${OP_INCLUDE_DIRECTORY} ${PBCVC_INCLUDE_DIRECTORY} ${PYTHON_INCLUDE_DIRECTORY} ${CUDA_HOME_DIRECTORY}/include ${OP_CAFFE_INCLUDE_DIRECTORY} ${NUMPY_INCLUDE_DIRECTORY} ${BOOST_INCLUDE_DIRECTORY})
+link_directories("${CUDA_HOME_DIRECTORY}/lib64" "${OP_CAFFE_LIB_DIRECTORY}" "${PBCVC_LIB_DIRECTORY}" "${PYTHON_LIB_DIRECTORY}" "${OPENPOSE_LIB_DIRECTORY}" "${OPENCV_LIB_DIRECTORY}")
 
 set(SOURCE_FILES code.cpp)
 add_library(OpenPersonDetectorAPI SHARED ${SOURCE_FILES})
 
-target_link_libraries(OpenPersonDetectorAPI "cuda" "cublas" "curand" "caffe" "pbcvt.cpython-35m-x86_64-linux-gnu" "boost_python-py35" "python3.5" "opencv_core" "glog" "boost_python-py35" "gflags" "cudart" "openpose")
+target_link_libraries(OpenPersonDetectorAPI "cuda" "cublas" "curand" "caffe" "pbcvt.cpython-35m-x86_64-linux-gnu" "boost_python-py35" "python3.5m" "opencv_core" "glog" "boost_python-py35" "gflags" "cudart" "openpose")
