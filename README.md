@@ -106,3 +106,7 @@ class PersonDetection:
 
 Contributions are more than welcome including improvements, bug fixes and
 adding new issues.
+
+## Notice
+
+This library is written on top of **OpenPose** library which has its own **License**. Since we have not included OpenPose source code, we release our library with Apache licence. But this library users should be aware of OpenPose license when using it for commercial purposes.
