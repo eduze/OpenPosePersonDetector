@@ -59,6 +59,8 @@ to Project Root of this repo
 - Finally, you need to download the OpenPose models into `${REPO}/models` directory
 similarly to OpenPose.
 
+You may need to set the LD_LIBRARY_PATH to `[OPENPOSE_CAFFE_LIB]:[CUDA_HOME]/lib64:[OPENPOSE_LIB]:[Python3.5_Path]/dist-packages`.
+
 ## Example
 
 You can run the `preview.py` to see a demonstration.
