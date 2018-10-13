@@ -6,6 +6,10 @@ detector is very accuracte compared to commonly used detectors like
 **Haar detector**, **HOG Person Detector** and **Tensorflow Object Detection based
 detector**.
 
+Following image shows an example of detected people walking in an airport terminal. Small yellow crosses corresponds to the 
+keypoints detected.
+![Detecting people walking in an airport terminal](https://github.com/eduze/OpenPosePersonDetector/blob/master/example.png)
+
 ## Prerequisites
 
 - Compiled version of [OpenPose](https://github.com/CMU-Perceptual-Computing-Lab/openpose)
